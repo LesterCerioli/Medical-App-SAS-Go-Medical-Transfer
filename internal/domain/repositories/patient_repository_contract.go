@@ -7,8 +7,8 @@ import (
 	"medical-record-service/internal/domain/entities"
 )
 
-// PatientRepository defines the interface for patient data operations.
-type PatientRepository interface {
+// PatientRepositoryContract defines the interface for patient data operations.
+type PatientRepositoryContract interface {
 	Create(ctx context.Context, patient *entities.Patient) error
 	GetByID(ctx context.Context, id uuid.UUID) (*entities.Patient, error)
 	Update(ctx context.Context, patient *entities.Patient) error
