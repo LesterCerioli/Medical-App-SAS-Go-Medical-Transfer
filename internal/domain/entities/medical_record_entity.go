@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm" // Added GORM import
 )
 
 // MedicalRecord represents a medical record for a patient.
