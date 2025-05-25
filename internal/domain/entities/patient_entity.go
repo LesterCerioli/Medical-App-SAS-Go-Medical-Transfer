@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm" // Added GORM import
 )
 
 // Patient represents a patient in the system.
