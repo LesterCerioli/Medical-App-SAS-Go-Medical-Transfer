@@ -3,11 +3,11 @@ package repositories
 import (
 	"context"
 
-	"medical-record-service/internal/domain/entities"
-
 	"github.com/google/uuid"
+	"medical-record-service/internal/domain/entities"
 )
 
+// PatientRepositoryContract defines the interface for patient data operations.
 type PatientRepositoryContract interface {
 	Create(ctx context.Context, patient *entities.Patient) error
 	GetByID(ctx context.Context, id uuid.UUID) (*entities.Patient, error)

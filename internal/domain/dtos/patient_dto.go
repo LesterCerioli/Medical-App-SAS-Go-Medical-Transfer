@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// PatientDTO represents patient data in API responses.
 type PatientDTO struct {
 	ID          uuid.UUID `json:"id"`
 	Name        string    `json:"name"`
