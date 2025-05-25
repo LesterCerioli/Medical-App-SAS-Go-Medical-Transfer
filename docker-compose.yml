@@ -1,0 +1,64 @@
+version: '3.8'
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+
+services:
+  db:
+    image: postgres:14-alpine
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydatabase
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+    ports: # Optional: expose postgres port to host for debugging/external tools
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myuser -d mydatabase"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  app:
+    build: . # Assumes Dockerfile is in the same directory
+    container_name: go_app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: myuser
+      DB_PASSWORD: mypassword
+      DB_NAME: mydatabase
+      # GO_APP_PORT: 8080 # Assuming the Go app listens on 8080
+    networks:
+      - app_network
+    ports:
+      - "8080:8080" # Assuming the Go app listens on 8080. Adjust if necessary.
+    # The command to run your Go application.
+    # This overrides the default CMD from the postgres:14-alpine image (which is to start postgres).
+    command: ["/usr/local/bin/go-app"]
+    healthcheck:
+      # This is a placeholder. Replace with a command appropriate for your Go app.
+      # e.g., using curl to hit a /health endpoint if your app has one:
+      # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # Or a custom script:
+      # test: ["CMD", "/usr/local/bin/check_app_health.sh"]
+      test: ["CMD-SHELL", "ps aux | grep go-app | grep -v grep || exit 1"] # Basic check if process is running
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
