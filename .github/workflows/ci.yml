@@ -1,31 +1,73 @@
-name: Go CI/CD Pipeline
+# This workflow will build a golang project
 
 on:
+  push:
+    branches:
+      - '*.*'
   pull_request:
     branches:
-      - main
-      - development
+      - '*.*'
 
 jobs:
-  build-and-test:
+  build:
     runs-on: ubuntu-latest
+
     steps:
+      # Checkout the code from the repository
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      
+      # Initialize project 
+      - name: Initialize Go Module
+        run: go mod init medical-sas-api || true
+
+      # Download deoendencies
+      - name: Download dependencies
+        run: go mod tidy 
+
+      # Set up Go environment
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v4
         with:
-          go-version: '1.22'  # Versão corrigida (1.24 não existe)
-          cache: true
+          go-version: 1.24.1
 
-      - name: Check out code
-        uses: actions/checkout@v4
+      # Cache Go modules
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
+      # Install Go dependencies
       - name: Install dependencies
-        run: |
-          go mod download
-          go mod tidy
+        run: go mod download
 
+      # Run Linter (golangci-lint is used here, adjust based on your preference)
+      #- name: Lint code
+        #run: |
+          #curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.54.2
+          #./bin/golangci-lint --version
+          #./bin/golangci-lint run --timeout=5m
+
+      # Run tests
+      - name: Run tests
+        run: go test -v ./...
+
+      # list files
+      - name: Debug - List files
+        run: ls -R
+
+      # Build the Go application
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./... -v
+      # Optionally, you can upload the build artifacts
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-fiber-app
+          path: ./cmd/main
