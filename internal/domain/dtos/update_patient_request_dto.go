@@ -1,4 +1,4 @@
-package domain
+package dtos
 
 // UpdatePatientRequest defines the payload for updating an existing patient.
 // Typically, you might want to use pointers for optional fields or have separate DTOs

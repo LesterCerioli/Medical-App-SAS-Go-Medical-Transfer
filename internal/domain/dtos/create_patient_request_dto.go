@@ -1,4 +1,4 @@
-package domain
+package dtos
 
 // CreatePatientRequest defines the payload for creating a new patient.
 type CreatePatientRequest struct {

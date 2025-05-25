@@ -1,4 +1,4 @@
-package domain
+package dtos
 
 import "github.com/google/uuid"
 
