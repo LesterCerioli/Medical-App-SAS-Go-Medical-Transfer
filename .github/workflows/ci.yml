@@ -1,4 +1,4 @@
-# This workflow will build a golang project
+name: Medical-App-SAS-Go-Medical-Transfer CI
 
 on:
   push:
