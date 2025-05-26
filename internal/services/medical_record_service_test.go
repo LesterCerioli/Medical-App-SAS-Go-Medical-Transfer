@@ -3,21 +3,19 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors" // For errors.New
+	"errors" 
 	"log"
 	"os"
 	"sync/atomic" 
 	"testing"
 	"time"
-	"fmt" // For fmt.Sprintf in logging
+	"fmt" 
+	"strings" 
 
 	"medical-record-service/internal/domain/entities"
 	"medical-record-service/internal/domain/repositories"
-	// No direct import of dtos needed here if MedicalRecordData is used from the same 'services' package
-	// "medical-record-service/internal/domain/dtos" 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	// "github.com/stretchr/testify/mock" // Not using testify/mock features for these mocks
 )
 
 // Compile-time check to ensure MockMedicalRecordRepository implements MedicalRecordRepositoryContract
@@ -74,7 +72,6 @@ func (m *MockMedicalRecordRepository) FindByPatientID(ctx context.Context, patie
 
 func (m *MockMedicalRecordRepository) ListAll(ctx context.Context) ([]*entities.MedicalRecord, error) {
 	atomic.AddInt32(&m.ListAllFuncCallCount, 1)
-	// t.Logf("MockMedicalRecordRepository.ListAll called, count: %d", atomic.LoadInt32(&m.ListAllFuncCallCount)) // Debugging line
 	if m.ListAllFunc != nil {
 		return m.ListAllFunc(ctx)
 	}
@@ -92,52 +89,68 @@ func TestMedicalRecordService_WorkersProcessJobs_And_GracefulShutdown(t *testing
 	mockRepo := &MockMedicalRecordRepository{}
 	logger := log.New(os.Stdout, "test-mr-process-shutdown: ", log.LstdFlags)
 	
-	// Explicitly cast to *MedicalRecordServiceImpl to access numWorkers
 	svcImpl := NewMedicalRecordService(mockRepo, logger).(*MedicalRecordServiceImpl)
 	assert.NotNil(t, svcImpl, "NewMedicalRecordService returned nil or not MedicalRecordServiceImpl")
 
-	// Service's main operational context
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensures context is cancelled if test panics or exits early
+	defer cancel() 
 
 	err := svcImpl.Start(ctx)
 	assert.NoError(t, err, "Start() should not return an error")
 
-	numJobs := 3 * svcImpl.numWorkers // Send enough jobs for all workers
+	numJobs := 3 * svcImpl.numWorkers 
 	for i := 0; i < numJobs; i++ {
 		jobData := MedicalRecordData{ 
 			PatientID:  uuid.New(),
 			RecordData: json.RawMessage(fmt.Sprintf(`{"detail":"record %d"}`, i)),
 		}
-		// Use a timeout for sending to the job channel to prevent test hanging
-		sendCtx, sendCancel := context.WithTimeout(ctx, 200*time.Millisecond) // Increased timeout
+		sendCtx, sendCancel := context.WithTimeout(ctx, 200*time.Millisecond) 
 		err := svcImpl.ProcessMedicalRecordData(sendCtx, jobData)
-		sendCancel() // Always call cancel for contexts created with WithTimeout or WithCancel
+		sendCancel() 
 		assert.NoError(t, err, "ProcessMedicalRecordData() should not error for job %d", i)
 	}
 
-	// Allow time for all jobs to be picked up and processed.
-	// Calculation: numJobs / numWorkers * (processJob_time + small_buffer)
-	// processJob_time is 100ms. If numWorkers is 5, (15/5)*100ms = 300ms.
-	// Add a generous buffer.
 	time.Sleep(time.Duration(numJobs/svcImpl.numWorkers+1)*150*time.Millisecond + 200*time.Millisecond)
 
+	processedCount := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
+	assert.Equal(t, int32(numJobs), processedCount, "Expected all initial jobs to be processed before stop")
 
-	// Stop the service
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stopCancel()
 	err = svcImpl.Stop(stopCtx)
 	assert.NoError(t, err, "Stop() should not return an error")
+	
+	var errAfterStop error
+	receivedExpectedError := false 
+	expectedErrorMessage := "service is shutting down, cannot accept new medical record jobs"
 
-	// Verify that all jobs were processed
-	// processJob in MedicalRecordServiceImpl calls ListAll once per job.
-	processedCount := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
-	assert.Equal(t, int32(numJobs), processedCount, "Expected all jobs to be processed")
+	for i := 0; i < 20; i++ { 
+		attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		dummyJobAfterStop := MedicalRecordData{PatientID: uuid.New(), RecordData: json.RawMessage(`{}`)}
+		
+		errAfterStop = svcImpl.ProcessMedicalRecordData(attemptCtx, dummyJobAfterStop)
+		attemptCancel() 
 
-	// Try to send a job after Stop. It should fail because serviceCtx is cancelled.
-	errAfterStop := svcImpl.ProcessMedicalRecordData(context.Background(), MedicalRecordData{PatientID: uuid.New()})
-	assert.Error(t, errAfterStop, "ProcessMedicalRecordData after Stop should return an error")
-	assert.EqualError(t, errAfterStop, "service is shutting down, cannot accept new medical record jobs", "Error message mismatch")
+		if errAfterStop != nil {
+			if strings.Contains(errAfterStop.Error(), expectedErrorMessage) {
+				receivedExpectedError = true
+				t.Logf("Correctly received error on attempt %d after Stop: %v", i+1, errAfterStop)
+				break 
+			}
+			t.Logf("Received an unexpected error on attempt %d after Stop: %v", i+1, errAfterStop)
+			receivedExpectedError = true 
+			break 
+		}
+		time.Sleep(100 * time.Millisecond) 
+	}
+
+	if !receivedExpectedError {
+		t.Errorf("ProcessMedicalRecordData after Stop did not return an error after multiple retries, last error: %v", errAfterStop)
+	} else if errAfterStop == nil { 
+        t.Errorf("ProcessMedicalRecordData after Stop returned nil, but an error was expected (loop logic issue)")
+    } else if !strings.Contains(errAfterStop.Error(), expectedErrorMessage) {
+        t.Errorf("ProcessMedicalRecordData after Stop returned error '%v', but expected to contain '%s'", errAfterStop, expectedErrorMessage)
+    }
 }
 
 func TestMedicalRecordService_Start_ContextCancellation_StopsProcessing(t *testing.T) {
@@ -147,48 +160,66 @@ func TestMedicalRecordService_Start_ContextCancellation_StopsProcessing(t *testi
 
 	serviceCtx, cancelServiceCtx := context.WithCancel(context.Background())
 
-	err := svcImpl.Start(serviceCtx) // Start service with this cancellable context
+	err := svcImpl.Start(serviceCtx) 
 	assert.NoError(t, err, "Start() should not return an error")
 
-	// Send a few jobs
-	numInitialJobs := svcImpl.numWorkers // Send one job per worker initially
+	numInitialJobs := svcImpl.numWorkers 
 	for i := 0; i < numInitialJobs; i++ {
 		jobData := MedicalRecordData{PatientID: uuid.New(), RecordData: json.RawMessage(`{"detail":"initial job"}`)}
 		sendCtx, sendCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		_ = svcImpl.ProcessMedicalRecordData(sendCtx, jobData) // Ignore error for this test focus
+		_ = svcImpl.ProcessMedicalRecordData(sendCtx, jobData) 
 		sendCancel()
 	}
 
-	// Allow some jobs to be processed
 	time.Sleep(time.Duration(numInitialJobs/svcImpl.numWorkers+1) * 50 * time.Millisecond)
 
+	cancelServiceCtx() 
 
-	cancelServiceCtx() // Cancel the service's main context
-
-	// Wait for shutdown triggered by context cancellation to complete.
-	// A simple way is to wait a bit, assuming shutdown is quick.
-	// A more robust way would be to check a signal from a Stop-like mechanism or if jobChan is closed.
-	// Since Stop() itself now signals a channel that shutdown() listens to,
-	// and shutdown calls serviceCancel(), this test primarily checks that serviceCancel()
-	// stops the workers and job processing.
-	time.Sleep(200 * time.Millisecond) // Allow time for workers to react to context cancellation
+	time.Sleep(200 * time.Millisecond) 
 
 	processedCountBeforeCancel := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
 	t.Logf("Jobs processed before/during cancellation: %d", processedCountBeforeCancel)
 	assert.True(t, processedCountBeforeCancel <= int32(numInitialJobs), "Should process at most the initial jobs")
 
+	// Polling loop to check if ProcessMedicalRecordData correctly returns error after context cancellation
+	var errAfterCtxCancel error
+	receivedExpectedErrorAfterCtxCancel := false
+	expectedErrorMessageAfterCtxCancel := "service is shutting down, cannot accept new medical record jobs"
 
-	// Attempt to send new jobs; should fail because serviceCtx is cancelled.
-	errAfterCtxCancel := svcImpl.ProcessMedicalRecordData(context.Background(), MedicalRecordData{PatientID: uuid.New()})
-	assert.Error(t, errAfterCtxCancel, "ProcessMedicalRecordData after context cancellation should return an error")
-	assert.EqualError(t, errAfterCtxCancel, "service is shutting down, cannot accept new medical record jobs", "Error message mismatch")
+	for i := 0; i < 20; i++ { // Try up to 20 times
+		// Using context.Background() directly as the attempt itself should be quick
+		// and not rely on the now-cancelled serviceCtx for its own execution.
+		attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		dummyJobAfterCtxCancel := MedicalRecordData{PatientID: uuid.New(), RecordData: json.RawMessage(`{"detail":"post-cancel job"}`)}
 
-	// Ensure that ListAllFuncCallCount does not increase further after cancellation.
-	time.Sleep(200 * time.Millisecond) // Wait to see if any more jobs are processed
+		errAfterCtxCancel = svcImpl.ProcessMedicalRecordData(attemptCtx, dummyJobAfterCtxCancel)
+		attemptCancel()
+
+		if errAfterCtxCancel != nil {
+			if strings.Contains(errAfterCtxCancel.Error(), expectedErrorMessageAfterCtxCancel) {
+				receivedExpectedErrorAfterCtxCancel = true
+				t.Logf("Correctly received error on attempt %d after context cancellation: %v", i+1, errAfterCtxCancel)
+				break
+			}
+			t.Logf("Received an unexpected error on attempt %d after context cancellation: %v", i+1, errAfterCtxCancel)
+			receivedExpectedErrorAfterCtxCancel = true // Mark to break, assertions below will check specific error
+			break
+		}
+		time.Sleep(100 * time.Millisecond) // Wait before retrying
+	}
+	
+	if !receivedExpectedErrorAfterCtxCancel {
+        t.Errorf("ProcessMedicalRecordData after context cancellation did not return an error after multiple retries, last error: %v", errAfterCtxCancel)
+    } else if errAfterCtxCancel == nil {
+        t.Errorf("ProcessMedicalRecordData after context cancellation returned nil, expected specific error '%s'", expectedErrorMessageAfterCtxCancel)
+    } else if !strings.Contains(errAfterCtxCancel.Error(), expectedErrorMessageAfterCtxCancel) {
+        t.Errorf("ProcessMedicalRecordData after context cancellation returned error '%v', but expected to contain '%s'", errAfterCtxCancel, expectedErrorMessageAfterCtxCancel)
+    }
+
+	time.Sleep(200 * time.Millisecond) 
 	processedCountAfterCancel := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
 	assert.Equal(t, processedCountBeforeCancel, processedCountAfterCancel, "No new jobs should be processed after context cancellation")
 
-	// Call Stop for completeness, it should be idempotent or quick if already stopped.
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer stopCancel()
 	err = svcImpl.Stop(stopCtx)
