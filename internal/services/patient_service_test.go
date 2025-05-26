@@ -2,93 +2,31 @@ package services
 
 import (
 	"context"
-	"errors" 
+	// "errors" // No longer needed if mock methods using it are removed
 	"fmt"    
 	"log"
 	"os"
-	"sync/atomic" 
+	"sync/atomic" // Still needed for tests to access counters on the mock
 	"testing"
 	"time"
 
-	"medical-record-service/internal/domain/entities"
-	"medical-record-service/internal/domain/repositories"
-	// PatientData is defined in patient_service_contract.go (same package)
-	// and is an alias for dtos.CreatePatientRequest.
-	// The contract file imports dtos, so the type is available.
-	// "medical-record-service/internal/domain/dtos" 
+	"medical-record-service/internal/domain/entities" // Still needed by tests
+	"medical-record-service/internal/domain/repositories" // Still needed by tests for the contract
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
-// Compile-time check to ensure MockPatientRepository implements PatientRepositoryContract
-var _ repositories.PatientRepositoryContract = (*MockPatientRepository)(nil)
-
-// MockPatientRepository is a mock implementation of PatientRepositoryContract.
-type MockPatientRepository struct {
-	CreateFunc           func(ctx context.Context, patient *entities.Patient) error
-	GetByIDFunc          func(ctx context.Context, id uuid.UUID) (*entities.Patient, error)
-	UpdateFunc           func(ctx context.Context, patient *entities.Patient) error
-	DeleteFunc           func(ctx context.Context, id uuid.UUID) error
-	FindByEmailFunc      func(ctx context.Context, email string) (*entities.Patient, error)
-	ListAllFunc          func(ctx context.Context) ([]*entities.Patient, error)
-	
-	ListAllFuncCallCount int32 
-	CreateFuncCallCount  int32 
-}
-
-func (m *MockPatientRepository) Create(ctx context.Context, patient *entities.Patient) error {
-	atomic.AddInt32(&m.CreateFuncCallCount, 1)
-	if m.CreateFunc != nil {
-		return m.CreateFunc(ctx, patient)
-	}
-	return nil
-}
-
-func (m *MockPatientRepository) GetByID(ctx context.Context, id uuid.UUID) (*entities.Patient, error) {
-	if m.GetByIDFunc != nil {
-		return m.GetByIDFunc(ctx, id)
-	}
-	return nil, errors.New("GetByIDFunc not implemented in mock")
-}
-
-func (m *MockPatientRepository) Update(ctx context.Context, patient *entities.Patient) error {
-	if m.UpdateFunc != nil {
-		return m.UpdateFunc(ctx, patient)
-	}
-	return errors.New("UpdateFunc not implemented in mock")
-}
-
-func (m *MockPatientRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	if m.DeleteFunc != nil {
-		return m.DeleteFunc(ctx, id)
-	}
-	return errors.New("DeleteFunc not implemented in mock")
-}
-
-func (m *MockPatientRepository) FindByEmail(ctx context.Context, email string) (*entities.Patient, error) {
-	if m.FindByEmailFunc != nil {
-		return m.FindByEmailFunc(ctx, email)
-	}
-	return nil, errors.New("FindByEmailFunc not implemented in mock")
-}
-
-func (m *MockPatientRepository) ListAll(ctx context.Context) ([]*entities.Patient, error) {
-	atomic.AddInt32(&m.ListAllFuncCallCount, 1)
-	if m.ListAllFunc != nil {
-		return m.ListAllFunc(ctx) 
-	}
-	return nil, nil
-}
+// Note: MockPatientRepository definition and its methods have been moved to mocks_test.go
 
 func TestNewPatientService(t *testing.T) {
-	mockRepo := &MockPatientRepository{}
+	mockRepo := &MockPatientRepository{} // This will now refer to the mock in mocks_test.go
 	logger := log.New(os.Stdout, "test-patient-service: ", log.LstdFlags)
 	svc := NewPatientService(mockRepo, logger)
 	assert.NotNil(t, svc, "NewPatientService() should not return nil")
 }
 
 func TestPatientService_WorkersProcessJobs_And_GracefulShutdown(t *testing.T) {
-	mockRepo := &MockPatientRepository{}
+	mockRepo := &MockPatientRepository{} // This will now refer to the mock in mocks_test.go
 	logger := log.New(os.Stdout, "test-ps-process-shutdown: ", log.LstdFlags)
 	
 	svcImpl := NewPatientService(mockRepo, logger).(*PatientServiceImpl) 
@@ -113,9 +51,6 @@ func TestPatientService_WorkersProcessJobs_And_GracefulShutdown(t *testing.T) {
 		assert.NoError(t, err, "ProcessPatientData() should not error for job %d", i)
 	}
 	
-	// Allow time for jobs to be processed.
-	// Calculation: (numJobs / numWorkers) * (processJob_time (100ms) + small_buffer)
-	// Example: (15 jobs / 5 workers) * 100ms = 300ms. Add generous buffer.
 	time.Sleep(time.Duration(numJobs/svcImpl.numWorkers+1)*150*time.Millisecond + 200*time.Millisecond)
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -132,7 +67,7 @@ func TestPatientService_WorkersProcessJobs_And_GracefulShutdown(t *testing.T) {
 }
 
 func TestPatientService_Start_ContextCancellation_StopsProcessing(t *testing.T) {
-	mockRepo := &MockPatientRepository{}
+	mockRepo := &MockPatientRepository{} // This will now refer to the mock in mocks_test.go
 	logger := log.New(os.Stdout, "test-ps-ctxcancel: ", log.LstdFlags)
 	svcImpl := NewPatientService(mockRepo, logger).(*PatientServiceImpl)
 

@@ -10,7 +10,7 @@ import (
 
 	"medical-record-service/internal/adapters"
 	"medical-record-service/internal/domain/dtos"
-	"medical-record-service/internal/domain/entities" // Para buscar Patient
+	// "medical-record-service/internal/domain/entities" // REMOVED: Para buscar Patient
 	"medical-record-service/internal/domain/repositories"
 	"medical-record-service/internal/fhir/mappers" // Para o PatientFHIRMapper
 
