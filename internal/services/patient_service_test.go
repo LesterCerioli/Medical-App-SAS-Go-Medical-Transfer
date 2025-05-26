@@ -13,6 +13,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// Compile-time check to ensure MockPatientRepository implements PatientRepositoryContract
+var _ repositories.PatientRepositoryContract = (*MockPatientRepository)(nil)
+
 // MockPatientRepository is a mock implementation of PatientRepositoryContract.
 type MockPatientRepository struct {
 	CreateFunc      func(ctx context.Context, patient *entities.Patient) error
