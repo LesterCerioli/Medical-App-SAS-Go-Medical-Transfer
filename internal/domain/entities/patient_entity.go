@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Patient represents a patient in the system.
 type Patient struct {
 	ID          uuid.UUID `json:"id" db:"id" gorm:"type:uuid;primary_key;default:uuid_generate_v4()"`
 	Name        string    `json:"name" db:"name" gorm:"not null"`
