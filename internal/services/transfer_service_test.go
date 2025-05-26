@@ -15,7 +15,7 @@ import (
 	"medical-record-service/internal/adapters" // Para MockQueueAdapter
 	"medical-record-service/internal/domain/dtos"
 	"medical-record-service/internal/domain/entities" // Still needed for patient in tests
-	"medical-record-service/internal/domain/repositories" // For PatientRepositoryContract
+	// "medical-record-service/internal/domain/repositories" // REMOVED: For PatientRepositoryContract
 	fhirmappers "medical-record-service/internal/fhir/mappers" 
 
 	"github.com/google/uuid"

@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	// "errors" // No longer needed if mock methods using it are removed
+	// "errors" // No longer needed as mock definitions are in mocks_test.go
 	"fmt"    
 	"log"
 	"os"
@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"medical-record-service/internal/domain/entities" // Still needed by tests
-	"medical-record-service/internal/domain/repositories" // Still needed by tests for the contract
-	"github.com/google/uuid"
+	// "medical-record-service/internal/domain/entities" // REMOVED
+	// "medical-record-service/internal/domain/repositories" // REMOVED
+	// "github.com/google/uuid" // REMOVED
 	"github.com/stretchr/testify/assert"
 )
 
@@ -40,7 +40,7 @@ func TestPatientService_WorkersProcessJobs_And_GracefulShutdown(t *testing.T) {
 
 	numJobs := 3 * svcImpl.numWorkers 
 	for i := 0; i < numJobs; i++ {
-		jobData := PatientData{
+		jobData := PatientData{ // PatientData is defined in patient_service_contract.go (same package)
 			Name:        fmt.Sprintf("Test User %d", i), 
 			Email:       fmt.Sprintf("test%d@example.com", i), 
 			DateOfBirth: "2000-01-01",

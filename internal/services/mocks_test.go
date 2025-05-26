@@ -4,12 +4,12 @@ import (
 	"context"
 	// "encoding/json" // If any mock needs it (MockQueueAdapter will need it)
 	"errors"      
-	"log"         // If any mock needs it (MockQueueAdapter will need it)
-	"sync"        // If any mock needs it (MockQueueAdapter will need it)
+	// "log"         // REMOVED: If any mock needs it (MockQueueAdapter will need it)
+	// "sync"        // REMOVED: If any mock needs it (MockQueueAdapter will need it)
 	"sync/atomic" 
 	// "time"        // If any mock needs it
 
-	"medical-record-service/internal/adapters" // For QueueAdapter contract
+	// "medical-record-service/internal/adapters" // REMOVED: For QueueAdapter contract
 	"medical-record-service/internal/domain/entities"
 	"medical-record-service/internal/domain/repositories"
 	"github.com/google/uuid"
