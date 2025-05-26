@@ -2,15 +2,22 @@ package services
 
 import (
 	"context"
+	"errors" 
+	"fmt"    
 	"log"
 	"os"
-	"sync/atomic" // For thread-safe counters in mocks
+	"sync/atomic" 
 	"testing"
 	"time"
 
 	"medical-record-service/internal/domain/entities"
 	"medical-record-service/internal/domain/repositories"
+	// PatientData is defined in patient_service_contract.go (same package)
+	// and is an alias for dtos.CreatePatientRequest.
+	// The contract file imports dtos, so the type is available.
+	// "medical-record-service/internal/domain/dtos" 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 )
 
 // Compile-time check to ensure MockPatientRepository implements PatientRepositoryContract
@@ -25,8 +32,8 @@ type MockPatientRepository struct {
 	FindByEmailFunc      func(ctx context.Context, email string) (*entities.Patient, error)
 	ListAllFunc          func(ctx context.Context) ([]*entities.Patient, error)
 	
-	ListAllFuncCallCount int32 // Atomic counter
-	CreateFuncCallCount  int32 // Atomic counter
+	ListAllFuncCallCount int32 
+	CreateFuncCallCount  int32 
 }
 
 func (m *MockPatientRepository) Create(ctx context.Context, patient *entities.Patient) error {
@@ -41,173 +48,127 @@ func (m *MockPatientRepository) GetByID(ctx context.Context, id uuid.UUID) (*ent
 	if m.GetByIDFunc != nil {
 		return m.GetByIDFunc(ctx, id)
 	}
-	return nil, nil
+	return nil, errors.New("GetByIDFunc not implemented in mock")
 }
 
 func (m *MockPatientRepository) Update(ctx context.Context, patient *entities.Patient) error {
 	if m.UpdateFunc != nil {
 		return m.UpdateFunc(ctx, patient)
 	}
-	return nil
+	return errors.New("UpdateFunc not implemented in mock")
 }
 
 func (m *MockPatientRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	if m.DeleteFunc != nil {
 		return m.DeleteFunc(ctx, id)
 	}
-	return nil
+	return errors.New("DeleteFunc not implemented in mock")
 }
 
 func (m *MockPatientRepository) FindByEmail(ctx context.Context, email string) (*entities.Patient, error) {
 	if m.FindByEmailFunc != nil {
 		return m.FindByEmailFunc(ctx, email)
 	}
-	return nil, nil
+	return nil, errors.New("FindByEmailFunc not implemented in mock")
 }
 
 func (m *MockPatientRepository) ListAll(ctx context.Context) ([]*entities.Patient, error) {
 	atomic.AddInt32(&m.ListAllFuncCallCount, 1)
 	if m.ListAllFunc != nil {
-		// The original signature for ListAllFunc in the mock was (ctx, ctx), which is incorrect.
-		// It should match the interface: (ctx context.Context) ([]*entities.Patient, error)
 		return m.ListAllFunc(ctx) 
 	}
 	return nil, nil
 }
 
-// TestNewPatientService can remain the same.
 func TestNewPatientService(t *testing.T) {
 	mockRepo := &MockPatientRepository{}
 	logger := log.New(os.Stdout, "test-patient-service: ", log.LstdFlags)
 	svc := NewPatientService(mockRepo, logger)
-
-	if svc == nil {
-		t.Errorf("NewPatientService() returned nil")
-	}
+	assert.NotNil(t, svc, "NewPatientService() should not return nil")
 }
 
-// TestPatientService_ProcessJobsAndShutdown tests processing jobs and graceful shutdown.
-func TestPatientService_ProcessJobsAndShutdown(t *testing.T) {
+func TestPatientService_WorkersProcessJobs_And_GracefulShutdown(t *testing.T) {
 	mockRepo := &MockPatientRepository{}
-	logger := log.New(os.Stdout, "test-process-shutdown: ", log.LstdFlags)
+	logger := log.New(os.Stdout, "test-ps-process-shutdown: ", log.LstdFlags)
 	
-	svc := NewPatientService(mockRepo, logger).(*PatientServiceImpl) 
+	svcImpl := NewPatientService(mockRepo, logger).(*PatientServiceImpl) 
+	assert.NotNil(t, svcImpl, "NewPatientService returned nil or not PatientServiceImpl")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure context is cancelled at the end of the test
+	defer cancel() 
 
-	err := svc.Start(ctx)
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
+	err := svcImpl.Start(ctx)
+	assert.NoError(t, err, "Start() should not return an error")
 
-	numJobs := 10
+	numJobs := 3 * svcImpl.numWorkers 
 	for i := 0; i < numJobs; i++ {
-		jobData := PatientData{Name: "Test User " + string(rune(i)), Email: "test"+string(rune(i))+"@example.com", DateOfBirth: "2000-01-01"}
-		// Use a non-cancellable context for ProcessPatientData if the main test context (ctx)
-		// might be cancelled before all jobs are submitted or processed.
-		// However, ProcessPatientData itself handles ctx.Done(), so using ctx is fine.
-		processCtx, processCancel := context.WithTimeout(ctx, 1*time.Second) // Timeout for sending job
-		err := svc.ProcessPatientData(processCtx, jobData)
-		processCancel() // Release resources associated with processCtx
-		if err != nil {
-			t.Errorf("ProcessPatientData() error = %v for job %d", err, i)
+		jobData := PatientData{
+			Name:        fmt.Sprintf("Test User %d", i), 
+			Email:       fmt.Sprintf("test%d@example.com", i), 
+			DateOfBirth: "2000-01-01",
 		}
+		sendCtx, sendCancel := context.WithTimeout(ctx, 200*time.Millisecond) 
+		err := svcImpl.ProcessPatientData(sendCtx, jobData)
+		sendCancel() 
+		assert.NoError(t, err, "ProcessPatientData() should not error for job %d", i)
 	}
+	
+	// Allow time for jobs to be processed.
+	// Calculation: (numJobs / numWorkers) * (processJob_time (100ms) + small_buffer)
+	// Example: (15 jobs / 5 workers) * 100ms = 300ms. Add generous buffer.
+	time.Sleep(time.Duration(numJobs/svcImpl.numWorkers+1)*150*time.Millisecond + 200*time.Millisecond)
 
-	// Allow time for jobs to be processed by workers.
-	// This duration depends on numJobs, numWorkers, and processing time per job.
-	// If processJob takes ~100ms (as per current PatientServiceImpl), 5 workers, 10 jobs.
-	// Theoretical minimum: (10 jobs / 5 workers) * 100ms/job = 200ms. Add buffer.
-	time.Sleep(600 * time.Millisecond) // Increased buffer
-
-	// Stop the service
-	// Use a new context for Stop, as the main 'ctx' might be tied to the overall test timeout.
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stopCancel()
-	err = svc.Stop(stopCtx)
-	if err != nil {
-		t.Fatalf("Stop() error = %v", err)
-	}
+	err = svcImpl.Stop(stopCtx)
+	assert.NoError(t, err, "Stop() should not return an error")
 
-	// After Stop, wg.Wait() in shutdown() should have completed.
-	// The ListAll in processJob is a placeholder. We expect it to be called for each job.
 	processedCount := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
-	if processedCount < int32(numJobs) {
-		t.Errorf("Expected at least %d calls to ListAll (from processJob), got %d", numJobs, processedCount)
-	}
-	t.Logf("ListAll call count: %d (Expected at least %d from jobs)", processedCount, numJobs)
+	assert.Equal(t, int32(numJobs), processedCount, "Expected all jobs to be processed")
+
+	errAfterStop := svcImpl.ProcessPatientData(context.Background(), PatientData{Name: "After Stop"})
+	assert.Error(t, errAfterStop, "ProcessPatientData after Stop should return an error")
+	assert.EqualError(t, errAfterStop, "patient service is shutting down, cannot accept new jobs", "Error message mismatch")
 }
 
-// TestPatientService_Start_ContextCancellation tests the new worker pool context handling
-func TestPatientService_Start_ContextCancellation(t *testing.T) {
-	mockRepo := &MockPatientRepository{
-		ListAllFunc: func(ctx context.Context) ([]*entities.Patient, error) {
-			// This ListAll is called by processJob.
-			t.Log("MockPatientRepository.ListAll called by a worker")
-			return nil, nil
-		},
-	}
-	logger := log.New(os.Stdout, "test-ctxcancel: ", log.LstdFlags)
-	svc := NewPatientService(mockRepo, logger).(*PatientServiceImpl)
+func TestPatientService_Start_ContextCancellation_StopsProcessing(t *testing.T) {
+	mockRepo := &MockPatientRepository{}
+	logger := log.New(os.Stdout, "test-ps-ctxcancel: ", log.LstdFlags)
+	svcImpl := NewPatientService(mockRepo, logger).(*PatientServiceImpl)
 
-	// Service's main operational context, which we will cancel
-	serviceCtx, cancelServiceCtx := context.WithCancel(context.Background()) 
+	serviceCtx, cancelServiceCtx := context.WithCancel(context.Background())
 
-	err := svc.Start(serviceCtx)
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
+	err := svcImpl.Start(serviceCtx) 
+	assert.NoError(t, err, "Start() should not return an error")
+
+	numInitialJobs := svcImpl.numWorkers 
+	for i := 0; i < numInitialJobs; i++ {
+		jobData := PatientData{Name: fmt.Sprintf("Initial Job %d", i), Email: fmt.Sprintf("initial%d@example.com", i), DateOfBirth: "2000-01-01"}
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_ = svcImpl.ProcessPatientData(sendCtx, jobData) 
+		sendCancel()
 	}
 
-	// Send a job to ensure workers are active
-	go func() {
-		// Use a background context for sending data as serviceCtx will be cancelled
-		jobCtx, jobCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer jobCancel()
-		err := svc.ProcessPatientData(jobCtx, PatientData{Name: "CtxCancel Job"})
-		if err != nil {
-			// This error is expected if cancellation happens fast
-			t.Logf("Note: Error sending job during ctx cancel test (potentially expected): %v", err)
-		}
-	}()
-	
-	time.Sleep(50 * time.Millisecond) // Brief pause to allow job submission/pickup
+	time.Sleep(time.Duration(numInitialJobs/svcImpl.numWorkers+1) * 50 * time.Millisecond)
 
-	// Cancel the service's main context to trigger shutdown via the monitoring goroutine in Start()
-	cancelServiceCtx()
+	cancelServiceCtx() // Cancel the service's main context
 
-	// Wait for the shutdown process triggered by context cancellation to complete.
-	// A robust way to check is to see if a subsequent Stop() call completes quickly,
-	// indicating that the internal wg.Wait() has already finished or is about to.
-	stopCompleted := make(chan bool)
-	go func() {
-		// Use a new context for Stop, as the service's main context (serviceCtx) is already cancelled.
-		stopCtx, stopCtxCancel := context.WithTimeout(context.Background(), 2*time.Second) 
-		defer stopCtxCancel()
-		
-		// Calling Stop here also tests idempotency of shutdown signals if stopChan was already processed.
-		// If Start's goroutine (monitoring ctx.Done()) called shutdown(), jobChan would be closed.
-		// If Stop() is called and also tries to signal stopChan, it should handle it gracefully.
-		svc.Stop(stopCtx) 
-		close(stopCompleted)
-	}()
+	time.Sleep(200 * time.Millisecond) // Allow time for workers to react
 
-	select {
-	case <-stopCompleted:
-		t.Log("Service stopped successfully after context cancellation.")
-	case <-time.After(3 * time.Second): // Test timeout
-		t.Errorf("Service did not stop in time after context cancellation.")
-	}
+	processedCountBeforeCancel := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
+	t.Logf("Jobs processed by PatientService before/during cancellation: %d", processedCountBeforeCancel)
+	assert.True(t, processedCountBeforeCancel <= int32(numInitialJobs), "Should process at most the initial jobs")
 
-	// Verify that new jobs are not processed after context cancellation and shutdown.
-	// This relies on jobChan being closed.
-	err = svc.ProcessPatientData(context.Background(), PatientData{Name: "Post-Shutdown Job"})
-	if err == nil {
-		// This might not be an error if jobChan is buffered and job was accepted before full stop.
-		// A more robust check would be that the ListAllFuncCallCount does not increase further.
-		// t.Errorf("ProcessPatientData should ideally error or not process job after shutdown, but no error returned.")
-		t.Logf("ProcessPatientData after shutdown did not return error, check ListAll count if it increased.")
-	} else {
-		t.Logf("ProcessPatientData after shutdown returned error as expected (or context timeout): %v", err)
-	}
+	errAfterCtxCancel := svcImpl.ProcessPatientData(context.Background(), PatientData{Name: "Post Cancel Job"})
+	assert.Error(t, errAfterCtxCancel, "ProcessPatientData after context cancellation should return an error")
+	assert.EqualError(t, errAfterCtxCancel, "patient service is shutting down, cannot accept new jobs", "Error message mismatch")
+
+	time.Sleep(200 * time.Millisecond) 
+	processedCountAfterCancel := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
+	assert.Equal(t, processedCountBeforeCancel, processedCountAfterCancel, "No new jobs should be processed after context cancellation")
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer stopCancel()
+	err = svcImpl.Stop(stopCtx)
+	assert.NoError(t, err, "Stop() after context cancellation should not error")
 }

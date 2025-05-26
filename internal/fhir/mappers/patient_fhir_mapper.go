@@ -3,7 +3,7 @@ package mappers
 import (
 	"encoding/json"
 	"fmt"
-	"time" // Para formatar datas se necessário
+	// No direct import for "time" here, relying on entities.Patient using time.Time
 
 	"medical-record-service/internal/domain/entities"
 	// "github.com/google/uuid" // Se IDs FHIR forem UUIDs
