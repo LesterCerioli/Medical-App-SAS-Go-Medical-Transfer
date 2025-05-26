@@ -2,114 +2,152 @@ package services
 
 import (
 	"context"
-	"log" // Using standard log package for now. Could be zerolog later.
+	"errors" // Added for errors.New
+	"log"
+	"sync" 
 	"time"
 
 	"medical-record-service/internal/domain/repositories"
-	// We might need a logger interface for better testability/flexibility
+	// PatientData is defined in patient_service_contract.go (same package)
+	// and is an alias for dtos.CreatePatientRequest.
+	// The contract file imports dtos, so the type is available.
 )
 
 // PatientServiceImpl implements PatientServiceContract for patient data processing.
 type PatientServiceImpl struct {
 	patientRepo repositories.PatientRepositoryContract
-	logger      *log.Logger // Placeholder for a more structured logger
-	stopChan    chan struct{} // Channel to signal shutdown
-	// Add other necessary fields, e.g., config for processing interval
+	logger      *log.Logger
+	jobChan     chan PatientData  
+	stopChan    chan struct{}     
+	numWorkers  int               
+	wg          sync.WaitGroup    
+	serviceCtx  context.Context    // For overall service lifecycle
+	serviceCancel context.CancelFunc // To cancel serviceCtx
 }
 
 // NewPatientService creates a new instance of PatientServiceImpl.
 func NewPatientService(repo repositories.PatientRepositoryContract, logger *log.Logger) PatientServiceContract {
+	numWorkers := 5 
+	ctx, cancel := context.WithCancel(context.Background())
 	return &PatientServiceImpl{
 		patientRepo: repo,
 		logger:      logger,
+		jobChan:     make(chan PatientData, 100), 
 		stopChan:    make(chan struct{}),
+		numWorkers:  numWorkers,
+		serviceCtx:  ctx,
+		serviceCancel: cancel,
 	}
 }
 
-// Start begins the background processing loop for patient data.
-func (s *PatientServiceImpl) Start(ctx context.Context) error {
-	s.logger.Println("Patient service started...")
-
-	go func() {
-		// Example: Ticker for periodic work, or could be event-driven
-		ticker := time.NewTicker(10 * time.Second) // Example processing interval
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				// This is where continuous processing logic would go.
-				// For example, checking a queue, polling a DB, etc.
-				// s.logger.Println("Patient service processing batch...")
-				// err := s.processBatch(ctx)
-				// if err != nil {
-				// 	s.logger.Printf("Error processing batch: %v", err)
-				// }
-				s.logger.Println("Patient service alive (periodic check)...") // Placeholder
-			case <-s.stopChan:
-				s.logger.Println("Patient service stopping background processor...")
-				return
-			case <-ctx.Done():
-				s.logger.Println("Patient service stopping due to context cancellation...")
-				// Example call to use patientRepo to avoid "imported and not used" for entities if repo methods return them
-				// and to ensure patientRepo itself is marked as used.
-				// This specific call might not make sense in a real shutdown, but serves the purpose for now.
-				_, err := s.patientRepo.ListAll(ctx)
-				if err != nil {
-					s.logger.Printf("Error during ListAll on shutdown: %v", err)
-				}
+// worker is a goroutine that processes jobs from jobChan.
+func (s *PatientServiceImpl) worker(id int) {
+	defer s.wg.Done() 
+	s.logger.Printf("Patient Worker %d started", id)
+	for {
+		select {
+		case data, ok := <-s.jobChan:
+			if !ok { 
+				s.logger.Printf("Patient Worker %d: jobChan closed, finishing.", id)
 				return
 			}
+			s.logger.Printf("Patient Worker %d processing data for patient: %s", id, data.Name) 
+			s.processJob(s.serviceCtx, data) // Pass serviceCtx so job respects service shutdown
+		case <-s.serviceCtx.Done(): 
+			s.logger.Printf("Patient Worker %d: service context done, finishing.", id)
+			return
+		}
+	}
+}
+
+// processJob contains the actual logic for processing a single PatientData item.
+func (s *PatientServiceImpl) processJob(ctx context.Context, data PatientData) {
+	s.logger.Printf("Processing job for patient: %s, Email: %s", data.Name, data.Email) 
+	
+	select {
+	case <-time.After(100 * time.Millisecond): // Simulate work
+		if s.patientRepo != nil { 
+			_, _ = s.patientRepo.ListAll(ctx) 
+		}
+		s.logger.Printf("Finished processing job for patient: %s", data.Name)
+	case <-ctx.Done(): // If the job's context (s.serviceCtx) is cancelled
+		s.logger.Printf("Job processing cancelled for patient: %s", data.Name)
+		return
+	}
+}
+
+// Start initializes and starts the worker pool and the service monitoring.
+func (s *PatientServiceImpl) Start(ctx context.Context) error { 
+	s.logger.Println("Patient service starting with worker pool...")
+
+	s.wg.Add(s.numWorkers)
+	for i := 1; i <= s.numWorkers; i++ {
+		go s.worker(i)
+	}
+	s.logger.Printf("%d patient workers started", s.numWorkers)
+
+	go func() {
+		select {
+		case <-ctx.Done(): 
+			s.logger.Println("Patient service parent context cancelled, initiating shutdown...")
+			s.shutdown()
+		case <-s.stopChan: 
+			s.logger.Println("Patient service received stop signal, initiating shutdown...")
+			s.shutdown()
 		}
 	}()
+
 	return nil
 }
 
-// Stop gracefully shuts down the patient processing service.
+// shutdown is an internal method to gracefully stop all workers.
+func (s *PatientServiceImpl) shutdown() {
+	s.logger.Println("Patient service initiating shutdown of worker pool...")
+	s.serviceCancel() // 1. Signal all operations using serviceCtx to cancel (workers, job processing)
+	
+	s.wg.Wait()      
+	s.logger.Println("All patient workers have finished.")
+	
+	s.logger.Println("Closing jobChan for patients.")
+	close(s.jobChan) // Workers will see channel closed and exit their range loop.
+
+	s.logger.Println("Patient service shutdown complete.")
+}
+
+// Stop signals the service to gracefully shut down.
 func (s *PatientServiceImpl) Stop(ctx context.Context) error {
 	s.logger.Println("Patient service stop requested...")
-	close(s.stopChan) // Signal the background goroutine to stop
-	// Add any other cleanup logic here
+	select {
+	case s.stopChan <- struct{}{}:
+		s.logger.Println("Stop signal sent to patient service monitoring goroutine.")
+	default:
+		s.logger.Println("Patient service already stopping or stop signal channel full/unmonitored.")
+	}
 	return nil
 }
 
-// ProcessPatientData handles the processing of new or updated patient data.
-// For now, it's a placeholder. In a real scenario, this might involve:
-// - Validating data
-// - Transforming data
-// - Calling repository methods to save/update data
-// - Emitting events
+// ProcessPatientData sends patient data to the job channel for asynchronous processing by a worker.
 func (s *PatientServiceImpl) ProcessPatientData(ctx context.Context, data PatientData) error {
-	s.logger.Printf("Processing patient data: %+v", data)
+	s.logger.Printf("Received patient data for processing: %+v", data) // Changed to %+v for more detail
+	select {
+	case <-s.serviceCtx.Done():
+		s.logger.Println("Patient service is shutting down, cannot accept new jobs.")
+		return errors.New("patient service is shutting down, cannot accept new jobs")
+	default:
+		// Continue if service context is not done
+	}
 
-	// Example: Using the repository (assuming CreatePatientRequest is PatientData)
-	// patientEntity := &entities.Patient{
-	// 	Name: data.Name,
-	// 	Email: data.Email,
-	// 	// DateOfBirth requires parsing from data.DateOfBirth (string) to time.Time
-	// 	// For example: dob, err := time.Parse("2006-01-02", data.DateOfBirth)
-	// 	// if err != nil { ... handle error ... }
-	// 	// DateOfBirth: dob,
-	// }
-	// // Need to import "medical-record-service/internal/domain/entities" for this
-	// err := s.patientRepo.Create(ctx, patientEntity)
-	// if err != nil {
-	//  s.logger.Printf("Error creating patient from processed data: %v", err)
-	// 	return err
-	// }
-	// s.logger.Printf("Successfully processed and created patient: %s", patientEntity.ID)
-	
-	// Simulate processing
-	time.Sleep(100 * time.Millisecond) 
-	s.logger.Println("Patient data processing complete for this request.")
-	return nil
+	select {
+	case s.jobChan <- data:
+		s.logger.Println("Patient data sent to job queue.")
+		return nil
+	case <-ctx.Done(): // Contexto da requisição específica
+		s.logger.Printf("Context for sending patient data cancelled: %v", ctx.Err())
+		return ctx.Err()
+	// No default here, so it blocks if jobChan is full, until ctx is done.
+	// Alternative:
+	// case <-time.After(1*time.Second): // Non-blocking with timeout
+	//  s.logger.Println("Timeout sending patient data to job queue.")
+	//  return errors.New("job queue full or send timeout")
+	}
 }
-
-// processBatch is a placeholder for any batch processing logic.
-// func (s *PatientServiceImpl) processBatch(ctx context.Context) error {
-// 	// Fetch a batch of data, process it, etc.
-// 	s.logger.Println("Processing a batch of patient data...")
-// 	// Example: records, err := s.patientRepo.GetUnprocessedPatients(ctx, 10)
-// 	// ... processing logic ...
-// 	return nil
-// }
