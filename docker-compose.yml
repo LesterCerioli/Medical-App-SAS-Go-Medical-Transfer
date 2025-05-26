@@ -51,11 +51,7 @@ services:
     # This overrides the default CMD from the postgres:14-alpine image (which is to start postgres).
     command: ["/usr/local/bin/go-app"]
     healthcheck:
-      # This is a placeholder. Replace with a command appropriate for your Go app.
-      # e.g., using curl to hit a /health endpoint if your app has one:
-      # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      # Or a custom script:
-      # test: ["CMD", "/usr/local/bin/check_app_health.sh"]
+      
       test: ["CMD-SHELL", "ps aux | grep go-app | grep -v grep || exit 1"] # Basic check if process is running
       interval: 15s
       timeout: 5s
