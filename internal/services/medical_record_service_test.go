@@ -3,17 +3,18 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors" 
+	"errors"
+	"fmt"
 	"log"
 	"os"
-	"sync/atomic" 
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
-	"fmt" 
-	"strings" 
 
 	"medical-record-service/internal/domain/entities"
 	"medical-record-service/internal/domain/repositories"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
@@ -23,15 +24,15 @@ var _ repositories.MedicalRecordRepositoryContract = (*MockMedicalRecordReposito
 
 // MockMedicalRecordRepository is a mock implementation of MedicalRecordRepositoryContract.
 type MockMedicalRecordRepository struct {
-	CreateFunc            func(ctx context.Context, record *entities.MedicalRecord) error
-	GetByIDFunc           func(ctx context.Context, id uuid.UUID) (*entities.MedicalRecord, error)
-	UpdateFunc            func(ctx context.Context, record *entities.MedicalRecord) error
-	DeleteFunc            func(ctx context.Context, id uuid.UUID) error
+	CreateFunc          func(ctx context.Context, record *entities.MedicalRecord) error
+	GetByIDFunc         func(ctx context.Context, id uuid.UUID) (*entities.MedicalRecord, error)
+	UpdateFunc          func(ctx context.Context, record *entities.MedicalRecord) error
+	DeleteFunc          func(ctx context.Context, id uuid.UUID) error
 	FindByPatientIDFunc func(ctx context.Context, patientID uuid.UUID) ([]*entities.MedicalRecord, error)
-	ListAllFunc           func(ctx context.Context) ([]*entities.MedicalRecord, error)
+	ListAllFunc         func(ctx context.Context) ([]*entities.MedicalRecord, error)
 
-	ListAllFuncCallCount int32 
-	CreateFuncCallCount  int32 
+	ListAllFuncCallCount int32
+	CreateFuncCallCount  int32
 }
 
 func (m *MockMedicalRecordRepository) Create(ctx context.Context, record *entities.MedicalRecord) error {
@@ -88,25 +89,25 @@ func TestNewMedicalRecordService(t *testing.T) {
 func TestMedicalRecordService_WorkersProcessJobs_And_GracefulShutdown(t *testing.T) {
 	mockRepo := &MockMedicalRecordRepository{}
 	logger := log.New(os.Stdout, "test-mr-process-shutdown: ", log.LstdFlags)
-	
+
 	svcImpl := NewMedicalRecordService(mockRepo, logger).(*MedicalRecordServiceImpl)
 	assert.NotNil(t, svcImpl, "NewMedicalRecordService returned nil or not MedicalRecordServiceImpl")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() 
+	defer cancel()
 
 	err := svcImpl.Start(ctx)
 	assert.NoError(t, err, "Start() should not return an error")
 
-	numJobs := 3 * svcImpl.numWorkers 
+	numJobs := 3 * svcImpl.numWorkers
 	for i := 0; i < numJobs; i++ {
-		jobData := MedicalRecordData{ 
+		jobData := MedicalRecordData{
 			PatientID:  uuid.New(),
 			RecordData: json.RawMessage(fmt.Sprintf(`{"detail":"record %d"}`, i)),
 		}
-		sendCtx, sendCancel := context.WithTimeout(ctx, 200*time.Millisecond) 
+		sendCtx, sendCancel := context.WithTimeout(ctx, 200*time.Millisecond)
 		err := svcImpl.ProcessMedicalRecordData(sendCtx, jobData)
-		sendCancel() 
+		sendCancel()
 		assert.NoError(t, err, "ProcessMedicalRecordData() should not error for job %d", i)
 	}
 
@@ -119,38 +120,38 @@ func TestMedicalRecordService_WorkersProcessJobs_And_GracefulShutdown(t *testing
 	defer stopCancel()
 	err = svcImpl.Stop(stopCtx)
 	assert.NoError(t, err, "Stop() should not return an error")
-	
+
 	var errAfterStop error
-	receivedExpectedError := false 
+	receivedExpectedError := false
 	expectedErrorMessage := "service is shutting down, cannot accept new medical record jobs"
 
-	for i := 0; i < 20; i++ { 
+	for i := 0; i < 20; i++ {
 		attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		dummyJobAfterStop := MedicalRecordData{PatientID: uuid.New(), RecordData: json.RawMessage(`{}`)}
-		
+
 		errAfterStop = svcImpl.ProcessMedicalRecordData(attemptCtx, dummyJobAfterStop)
-		attemptCancel() 
+		attemptCancel()
 
 		if errAfterStop != nil {
 			if strings.Contains(errAfterStop.Error(), expectedErrorMessage) {
 				receivedExpectedError = true
 				t.Logf("Correctly received error on attempt %d after Stop: %v", i+1, errAfterStop)
-				break 
+				break
 			}
 			t.Logf("Received an unexpected error on attempt %d after Stop: %v", i+1, errAfterStop)
-			receivedExpectedError = true 
-			break 
+			receivedExpectedError = true
+			break
 		}
-		time.Sleep(100 * time.Millisecond) 
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	if !receivedExpectedError {
 		t.Errorf("ProcessMedicalRecordData after Stop did not return an error after multiple retries, last error: %v", errAfterStop)
-	} else if errAfterStop == nil { 
-        t.Errorf("ProcessMedicalRecordData after Stop returned nil, but an error was expected (loop logic issue)")
-    } else if !strings.Contains(errAfterStop.Error(), expectedErrorMessage) {
-        t.Errorf("ProcessMedicalRecordData after Stop returned error '%v', but expected to contain '%s'", errAfterStop, expectedErrorMessage)
-    }
+	} else if errAfterStop == nil {
+		t.Errorf("ProcessMedicalRecordData after Stop returned nil, but an error was expected (loop logic issue)")
+	} else if !strings.Contains(errAfterStop.Error(), expectedErrorMessage) {
+		t.Errorf("ProcessMedicalRecordData after Stop returned error '%v', but expected to contain '%s'", errAfterStop, expectedErrorMessage)
+	}
 }
 
 func TestMedicalRecordService_Start_ContextCancellation_StopsProcessing(t *testing.T) {
@@ -160,22 +161,22 @@ func TestMedicalRecordService_Start_ContextCancellation_StopsProcessing(t *testi
 
 	serviceCtx, cancelServiceCtx := context.WithCancel(context.Background())
 
-	err := svcImpl.Start(serviceCtx) 
+	err := svcImpl.Start(serviceCtx)
 	assert.NoError(t, err, "Start() should not return an error")
 
-	numInitialJobs := svcImpl.numWorkers 
+	numInitialJobs := svcImpl.numWorkers
 	for i := 0; i < numInitialJobs; i++ {
 		jobData := MedicalRecordData{PatientID: uuid.New(), RecordData: json.RawMessage(`{"detail":"initial job"}`)}
 		sendCtx, sendCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		_ = svcImpl.ProcessMedicalRecordData(sendCtx, jobData) 
+		_ = svcImpl.ProcessMedicalRecordData(sendCtx, jobData)
 		sendCancel()
 	}
 
 	time.Sleep(time.Duration(numInitialJobs/svcImpl.numWorkers+1) * 50 * time.Millisecond)
 
-	cancelServiceCtx() 
+	cancelServiceCtx()
 
-	time.Sleep(200 * time.Millisecond) 
+	time.Sleep(200 * time.Millisecond)
 
 	processedCountBeforeCancel := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
 	t.Logf("Jobs processed before/during cancellation: %d", processedCountBeforeCancel)
@@ -207,16 +208,16 @@ func TestMedicalRecordService_Start_ContextCancellation_StopsProcessing(t *testi
 		}
 		time.Sleep(100 * time.Millisecond) // Wait before retrying
 	}
-	
-	if !receivedExpectedErrorAfterCtxCancel {
-        t.Errorf("ProcessMedicalRecordData after context cancellation did not return an error after multiple retries, last error: %v", errAfterCtxCancel)
-    } else if errAfterCtxCancel == nil {
-        t.Errorf("ProcessMedicalRecordData after context cancellation returned nil, expected specific error '%s'", expectedErrorMessageAfterCtxCancel)
-    } else if !strings.Contains(errAfterCtxCancel.Error(), expectedErrorMessageAfterCtxCancel) {
-        t.Errorf("ProcessMedicalRecordData after context cancellation returned error '%v', but expected to contain '%s'", errAfterCtxCancel, expectedErrorMessageAfterCtxCancel)
-    }
 
-	time.Sleep(200 * time.Millisecond) 
+	if !receivedExpectedErrorAfterCtxCancel {
+		t.Errorf("ProcessMedicalRecordData after context cancellation did not return an error after multiple retries, last error: %v", errAfterCtxCancel)
+	} else if errAfterCtxCancel == nil {
+		t.Errorf("ProcessMedicalRecordData after context cancellation returned nil, expected specific error '%s'", expectedErrorMessageAfterCtxCancel)
+	} else if !strings.Contains(errAfterCtxCancel.Error(), expectedErrorMessageAfterCtxCancel) {
+		t.Errorf("ProcessMedicalRecordData after context cancellation returned error '%v', but expected to contain '%s'", errAfterCtxCancel, expectedErrorMessageAfterCtxCancel)
+	}
+
+	time.Sleep(200 * time.Millisecond)
 	processedCountAfterCancel := atomic.LoadInt32(&mockRepo.ListAllFuncCallCount)
 	assert.Equal(t, processedCountBeforeCancel, processedCountAfterCancel, "No new jobs should be processed after context cancellation")
 

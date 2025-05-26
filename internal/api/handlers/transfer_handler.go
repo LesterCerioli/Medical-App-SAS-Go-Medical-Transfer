@@ -12,13 +12,11 @@ import (
 	"github.com/google/uuid" // Para validar PatientID se não for feito pelo DTO/validator
 )
 
-// TransferHandler manipula as requisições HTTP relacionadas a transferências de pacientes.
 type TransferHandler struct {
 	transferService services.TransferServiceContract
 	logger          *log.Logger
 }
 
-// NewTransferHandler cria um novo TransferHandler.
 func NewTransferHandler(ts services.TransferServiceContract, logger *log.Logger) *TransferHandler {
 	return &TransferHandler{
 		transferService: ts,
@@ -26,12 +24,9 @@ func NewTransferHandler(ts services.TransferServiceContract, logger *log.Logger)
 	}
 }
 
-// InitiateExport é o handler para o endpoint POST /transfer/export.
-// Ele inicia o processo de exportação de prontuários de um paciente.
 func (h *TransferHandler) InitiateExport(c *fiber.Ctx) error {
 	h.logger.Println("Recebida requisição para InitiateExport")
 
-	// Parsear e validar o corpo da requisição
 	var req dtos.InitiateTransferRequest
 	if err := c.BodyParser(&req); err != nil {
 		h.logger.Printf("Erro ao parsear corpo da requisição InitiateExport: %v\n", err)
@@ -40,29 +35,22 @@ func (h *TransferHandler) InitiateExport(c *fiber.Ctx) error {
 		})
 	}
 
-	// Validação (exemplo básico, idealmente usar um validator como go-playground/validator)
-	// O DTO já tem tags `validate`, mas o Fiber precisa ser configurado para usá-las
-	// ou validamos manualmente aqui.
 	if req.PatientID == uuid.Nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "patientId é obrigatório"})
 	}
 	if req.FHIRVersion != "STU3" && req.FHIRVersion != "DSTU2" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "fhirVersion deve ser STU3 ou DSTU2"})
 	}
-	
+
 	h.logger.Printf("Dados da requisição InitiateExport validados: %+v\n", req)
 
-	// Chamar o serviço de transferência
-	// Adicionar um timeout ao contexto da chamada do serviço
 	ctx, cancel := context.WithTimeout(c.Context(), 30*time.Second) // Exemplo de timeout
 	defer cancel()
 
 	exportID, err := h.transferService.InitiateExport(ctx, req)
 	if err != nil {
 		h.logger.Printf("Erro ao chamar TransferService.InitiateExport: %v\n", err)
-		// Decidir o código de status baseado no tipo de erro
-		// Ex: se for "paciente não encontrado", pode ser 404. Se for erro de enfileiramento, 500.
-		// Por enquanto, um erro genérico 500.
+
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Erro ao iniciar o processo de exportação: " + err.Error(),
 		})
@@ -72,7 +60,7 @@ func (h *TransferHandler) InitiateExport(c *fiber.Ctx) error {
 	// Retornar 202 Accepted, pois o processamento é assíncrono (enfileirado).
 	return c.Status(fiber.StatusAccepted).JSON(dtos.ExportStatusResponse{
 		TransferProgress: dtos.TransferProgress{
-			TransferID: exportID, // Usar o ID da operação de exportação como TransferID aqui
+			TransferID: exportID,  // Usar o ID da operação de exportação como TransferID aqui
 			Status:     "PENDING", // O status inicial é pendente/enfileirado
 			Message:    "Processo de exportação iniciado e enfileirado.",
 		},
@@ -80,11 +68,8 @@ func (h *TransferHandler) InitiateExport(c *fiber.Ctx) error {
 	})
 }
 
-// RegisterTransferRoutes registra as rotas de transferência no app Fiber.
-// (Esta função pode estar em um arquivo de rotas separado ou no main.go,
-// mas é colocada aqui para manter o handler auto-contido por enquanto).
 func RegisterTransferRoutes(app *fiber.App, th *TransferHandler) {
 	transferGroup := app.Group("/transfer")
 	transferGroup.Post("/export", th.InitiateExport)
-	// transferGroup.Post("/import", th.InitiateImport) // Para o futuro
+
 }

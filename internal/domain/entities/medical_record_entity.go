@@ -7,8 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// MedicalRecord represents a medical record for a patient.
-// The RecordData field is stored as JSONB in the database.
 type MedicalRecord struct {
 	ID         uuid.UUID       `json:"id" db:"id" gorm:"type:uuid;primary_key;default:uuid_generate_v4()"`
 	PatientID  uuid.UUID       `json:"patient_id" db:"patient_id" gorm:"type:uuid;not null"` // foreignKey:PatientID is implicitly handled by GORM if the field name is PatientID and Patient struct has an ID. Explicit tagging can be added if needed.

@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// MedicalRecordDTO represents medical record data in API responses.
 type MedicalRecordDTO struct {
 	ID         uuid.UUID       `json:"id"`
 	PatientID  uuid.UUID       `json:"patient_id"`
